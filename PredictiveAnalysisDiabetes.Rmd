@@ -1,0 +1,324 @@
+---
+title: "Predictive Analysis of Diabetes in Pima Indian Females Using Diagnostic Measurements"
+author: "Nitya Kari"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Data and Packages
+```{r}
+library(tidyverse)
+library(HDclassif)
+library(psych)
+library(caret)
+library(factoextra)
+library(rms)
+library(dplyr)
+
+
+data <- read.csv("/Users/nitwit/Desktop/google trends/diabetes.csv")
+```
+> This dataset contains information about whether a patient has diabetes or not based on certain diagnostic measurements. All the patients in this dataset are Pima Indian females who are at least 21 years of age. There are many predictor variables in this dataset (pregnancy, glucose, blood pressure, skin thickness, insulin, BMI, diabetes pedigree function, age) as well as the diabetes outcome variable. There are 768 seperate values in this dataset.
+
+> This dataset was obtained from Kaggle.com (https://www.kaggle.com/datasets/uciml/pima-indians-diabetes-database) but is originally from the National Institute of Diabetes and Digestive and Kidney Diseases. 
+
+## Research Question
+> For this dataset, my research question is "Can the aforementioned variables accurately predict whether a person has diabetes or not?"
+
+> Essentially, I would like to use the predictor variables in this dataset to see I can train an algorithm to detect whether a person of Pima Indian descent has diabetes. 
+
+> Ho (null hyporthesis): There is no relationship or predictive power between the variables and the presence of diabetes
+> Ha (alternative hypothesis): There is a relationship or predictive power between the variables and the presence of diabetes
+
+## Variables of Interest
+> Outcome variable -> whether the person has diabetes or not
+> Predictor variables -> pregnancy, glucose, blood pressure, skin thickness, insulin, BMI, diabetes pedigree function, age 
+> The predictor variables are all continuous numeric variables while the outcome is categorical (0: no diabetes, 1: has diabetes).
+
+## Data Wrangling
+```{r}
+data_complete <- na.omit(data)
+
+outcome <- data_complete$Outcome
+
+# data_complete <- data_complete %>%
+#   select(-Outcome)
+
+#check for collinearity
+numeric_columns <- data[sapply(data, is.numeric)]
+correlation_matrix <- cor(numeric_columns)
+highly_correlated <- which(abs(correlation_matrix) >= 0.70, arr.ind = TRUE)
+print(highly_correlated)
+
+# ensuring that data is on the same scale
+numeric_columns <- data[sapply(data, is.numeric)]
+scaled_data <- scale(numeric_columns)
+scaled_data <- as.data.frame(scaled_data)
+str(scaled_data)
+```
+> All the predictor variables have high collinearity (above 0.7)
+
+## Analysis and Visualization
+> I plan to use a PCA to perform an unsupervised dimension reduction and because the variables are aggregate. 
+
+```{r}
+data_pca <- prcomp(scaled_data, center = TRUE, scale = TRUE)
+summary(data_pca)
+```
+
+```{r}
+setup_ggplot2_heatmap <- function(
+    correlation_matrix, # input for correlation matrix
+    type = c("full", "lower", "upper")
+    # whether matrix should depict the full, lower,
+    # or upper matrix
+)
+{
+  
+  # Ensure correlation matrix is a `matrix` object
+  corr_mat <- as.matrix(correlation_matrix)
+  
+  # Determine triangle
+  if(type == "lower"){
+    corr_mat[upper.tri(corr_mat)] <- NA
+  }else if(type == "upper"){
+    corr_mat[lower.tri(corr_mat)] <- NA
+  }
+  
+  # Convert to long format
+  corr_df <- data.frame(
+    Var1 = rep(colnames(corr_mat), each = ncol(corr_mat)),
+    Var2 = rep(colnames(corr_mat), times = ncol(corr_mat)),
+    Correlation = as.vector(corr_mat)
+  )
+  
+  # Set levels
+  corr_df$Var1 <- factor(
+    corr_df$Var1, levels = colnames(corr_mat)
+  )
+  corr_df$Var2 <- factor(
+    corr_df$Var2, levels = rev(colnames(corr_mat))
+  )
+  corr_df$Correlation <- as.numeric(corr_df$Correlation)
+  
+  # Return data frame for plotting
+  return(corr_df)
+  
+}
+
+# Obtain full matrix
+data_lower <- setup_ggplot2_heatmap(
+  cor(data_complete), type = "full"
+)
+
+# Plot correlation matrix
+ggplot(
+  data = data_lower,
+  aes(x = Var1, y = Var2, fill = Correlation)
+) +
+  geom_tile(color = "black") +
+  scale_fill_gradient2(
+    low = "#CD533B", mid = "#EAEBED",
+    high = "#588B8B", limits = c(-1, 1),
+    guide = guide_colorbar(
+      frame.colour = "black",
+      ticks.colour = "black"
+    )
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title = element_blank(),
+    plot.title = element_text(size = 14, hjust = 0.5)
+  ) +
+  labs(title = "Diabetes Correlation Matrix")
+```
+> Looking at the correlation matrix, we can see that most of the varaibles have a slight correlation to each other. It is interesting to note that not many of the predictor variables are blaringly correlated to the outcome variable (has diabetes). Glucose, as a predictor variable, appears to have the most correlation to the outcome variable. However, all of the correlations to the outcome variable appear to be positive. 
+
+```{r}
+# Obtain two principal components
+components <- kmeans(
+  x = t(as.matrix(data_complete)),
+  centers = 2
+)
+
+# Visualize
+fviz_cluster(
+  components,
+  data = t(as.matrix(data_complete))
+) +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = 0) +
+  scale_x_continuous(
+    limits = c(-300, 300),
+    breaks = seq(-300, 300, 100)
+  ) +
+  scale_y_continuous(
+    limits = c(-100, 100),
+    breaks = seq(-100, 100, 50)
+  ) +
+  theme(
+    plot.title = element_blank(),
+    panel.background = element_blank(),
+    axis.line = element_line(linewidth = 1),
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    legend.position = "none"
+  )
+```
+> Through this, we can see the directionality of greatest variance. 
+
+
+```{r}
+# Produce 2-dimensional plot
+fviz_pca_ind(
+  data_pca,
+  c = "point", # Observations
+  col.ind = "cos2", # Quality of representation
+  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+  repel = FALSE
+)
+
+# Biplot
+fviz_pca_biplot(
+  data_pca, repel = TRUE,
+  col.var = "#FC4E07", # Variables color
+  col.ind = "#00AFBB",  # Individuals color
+  label = "var" # Variables only
+)
+```
+> The individual 2D plot showcases that there is a lot more variability in the first, second, and third quadrants. The direction of the variability also matches up the direction we saw in the cluster visualization. This is also further emphasized by the Biplot visualization as all of the variable were in the left quadrants, albeit their varied directions. 
+
+```{r}
+# Barlett's test
+cortest.bartlett(scaled_data)
+
+# KMO
+KMO(scaled_data)
+```
+> I used the Barlett's test to test for significant relationships. The large chi squared statistic showcases that there are large discrepancy in variability. Additionally, the p-value is very small which goes to show that there is strong evidence against the null hypothesis which is that there is no correlation between the outcome variable and the predictor variables. Since the p-value is less than 0.05, this dataset is appropriate for PCA. 
+
+> Looking at the KMO results, the MSA value of 0.62 indicates that this dataset is moderately accurate for factor analysis. All of the variables have MSA values in similar ranges (which may not be ideal as they tend to lie between 0.5 and 0.6), with the DiabetesPedigreeFunction MSA value being the closest to 1. 
+
+```{r}
+# PCA with {psych}
+initial_pca <- principal(scaled_data, nfactors = ncol(scaled_data), rotate = "oblimin")
+
+# Plot
+plot(initial_pca$values, type = "b", ylab = "Eigenvalues"); abline(h = 1);
+```
+> Looking at this plot, the ideal number of components would be 3 components. 
+
+```{r}
+# PCA with {psych}
+parallel_pca <- fa.parallel(
+x = scaled_data, fa = "pc",
+sim = FALSE # ensures resampling
+)
+```
+> This plot also showcases that the ideal number of components is around 3. However, it is interesting to note that the resampled data line showcases a component number that is around 5. 
+
+```{r}
+# PCA with {psych}
+final_pca <- principal(
+r = scaled_data, nfactors = 3,
+rotate = "oblimin", # Correlated dimensions
+residuals = TRUE # Obtain residuals
+)
+
+# Perform Shapiro-Wilk Test
+shapiro.test(final_pca$residual)
+
+# Check out histogram
+hist(final_pca$residual)
+```
+
+```{r}
+# Check loadings
+loadings <- round(final_pca$loadings[,1:3], 3)
+# For interpretation, set less than 0.30 to ""
+loadings[loadings < 0.30] <- ""
+# Print loadings
+View(as.data.frame(loadings))
+```
+
+> Looking at the Scores, we can see that the variables have been sorted into the 3 components that we requested. Pregnancy, blood pressure, and age are in TC2. Glucose, insulin, the diabetes pedigree function, and the diabetes outcome are in TC1. Finally, blood pressure, skin thickness, insulin, and BMI are in TC3. 
+
+```{r}
+pca_scores <- final_pca$scores
+
+colnames(pca_scores) <- c(
+"TC2", "TC1", "TC3"
+)
+
+pca_scores <- as.data.frame(pca_scores)
+pca_scores$Outcome <- outcome 
+scores_final <- na.omit(pca_scores)
+
+layout(matrix(1:2, nrow = 1)); hist(scores_final$Outcome); hist(log(scores_final$Outcome))
+```
+
+```{r}
+# Set seed
+set.seed(1234)
+# Set up training and testing
+train_index <- sample(
+  1:nrow(scores_final),
+  round(nrow(scores_final) * 0.70)
+)
+test_index <- setdiff(
+  1:nrow(scores_final),
+  train_index
+)
+# Perform logistic regression
+data_lrm <- lrm(
+  Outcome ~ .,   
+  data = scores_final[train_index, -8]
+)
+
+data_lrm
+
+exp(data_lrm$coefficients)
+```
+```{r}
+# Regular logistic
+data_logm <- glm(
+  Outcome ~ .,
+  data = scores_final[train_index,-8],
+  family = "binomial"
+)
+# Get classes
+predicted <- factor(
+  ifelse(predict(data_logm) > 0.50, 1, 0)
+)
+# Get test classes while were at it
+test_predicted <- factor(
+  ifelse(predict(
+    data_logm,
+    newdata = scores_final[test_index,]
+) > 0.50, 1, 0)
+)
+```
+
+```{r}
+# Confusion matrix
+confusionMatrix(data = predicted, positive = "1",
+reference = factor(scores_final$Outcome[train_index]))
+
+# Confusion matrix
+confusionMatrix(data = test_predicted, positive = "1",
+reference = factor(scores_final$Outcome[test_index]))
+```
+
+## Discussion
+
+> Looking at the data analysis and visualizations, it is important to note that the KMO MSA avlues did not have any variables with ideal values. However, as mentioned earlier, the p-value that we calculated using the Barlett's is incredibly low which means that we can reasonably conclude that the null hypothesis is rejected and we can accept the alternate hypothesis that there is a correlation between the predictor variables and the outcome variable of diabetes in the female Pima Indian population.
+
+> In this assignment, we used PCA to obtain 3 dimensions in our Female Pima Indian Diabetes data. Using these dimensions, we then classified each participant according to their diabetes outcome. Looking at the logistic regression model, the TC1 dimension had the highest predicatbility with ach standard deviation being associated with a nearly 36 times higher odds of having diabetes. In our training data, we could accurately predict the diabetes outcome with 90.15% accuracy rate with a slightly higher Kappa (0.77). In our testing data, we could accurately predict with 88.26% accuracy rate with a similar Kappa to the training data (0.75). 
+
+> All in all, this goes to show that the predictor variables in this dataset can be used to predict the diabetes outcome of women in the Pima Indian population. 
